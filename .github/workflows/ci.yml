@@ -1,4 +1,5 @@
-name: FileConvert CI
+
+name: FileConvert CI/CD
 
 on:
   push:
@@ -6,24 +7,80 @@ on:
 
 jobs:
   build-and-test:
-      runs-on: ubuntu-latest
-      permissions:
-            contents: read
-      steps:
-        - name: Checkout respo
-          uses: actions/checkout@v7
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
-        - name: Set up Node.js
-          uses: actions/setup-node@v4
-          with:
-            node-version: "24"
-            cache: npm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-        - name: Install dependencies
-          run: npm ci
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
 
-        - name: Run tests
-          run: npm test
+      - name: Install dependencies
+        run: npm ci
 
-        - name: Build docker image
-          run: docker build -t fileconvert:ci .
+      - name: Run tests
+        run: npm test
+
+      - name: Build Docker image
+        run: docker build -t fileconvert:ci .
+
+  deploy:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: devops-512809
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: fileconvert-deployer@devops-512809.iam.gserviceaccount.com
+
+      - name: Install gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy through IAP SSH
+        env:
+          VM_USER: ${{ vars.GCP_VM_USER }}
+          VM_HOST_KEY: ${{ vars.GCP_VM_HOST_KEY }}
+          VM_SSH_KEY: ${{ secrets.GCP_VM_SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/fileconvert_deploy
+          chmod 600 ~/.ssh/fileconvert_deploy
+          printf 'devops-vm %s\n' "$VM_HOST_KEY" > ~/.ssh/known_hosts
+
+          ssh -i ~/.ssh/fileconvert_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ProxyCommand="gcloud compute start-iap-tunnel devops-vm 22 --listen-on-stdin --project=devops-512809 --zone=us-central1-a --verbosity=warning" "$VM_USER@devops-vm" "bash -se -- $GITHUB_SHA" <<'REMOTE'
+          set -e
+
+          if [ ! -d "$HOME/fileconvert-live/.git" ]; then
+            git clone https://github.com/muradpetrosyancloud/fileconvert-cicd.git "$HOME/fileconvert-live"
+          fi
+
+          cd "$HOME/fileconvert-live"
+          git fetch origin main
+          git checkout --force --detach "$1"
+
+          docker build -t fileconvert:latest .
+
+          if docker container inspect fileconvert >/dev/null 2>&1; then
+            docker rm -f fileconvert
+          fi
+
+          docker run -d --name fileconvert --restart unless-stopped -p 127.0.0.1:8083:3000 fileconvert:latest
+
+          curl -fsS --retry 10 --retry-delay 2 --retry-connrefused http://127.0.0.1:8083/health
+          REMOTE
