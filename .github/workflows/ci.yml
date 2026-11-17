@@ -55,7 +55,7 @@ jobs:
         env:
           VM_USER: ${{ vars.GCP_VM_USER }}
           VM_HOST_KEY: ${{ vars.GCP_VM_HOST_KEY }}
-          VM_SSH_KEY: ${{ secrets.GCP_VM_SSH_PRIVATE_KEY }}
+          VM_SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
