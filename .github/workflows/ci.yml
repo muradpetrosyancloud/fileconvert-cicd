@@ -82,5 +82,5 @@ jobs:
 
           docker run -d --name fileconvert --restart unless-stopped -p 127.0.0.1:8083:3000 fileconvert:latest
 
-          curl -fsS --retry 10 --retry-delay 2 --retry-connrefused http://127.0.0.1:8083/health
+          curl -fsS --retry 10 --retry-delay 2 --retry-all-errors http://127.0.0.1:8083/health
           REMOTE
